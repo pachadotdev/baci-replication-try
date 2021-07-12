@@ -1,5 +1,6 @@
 source("99-1-pkgs.R")
 source("99-2-clean-funs.R")
+source("99-3-predict-funs.R")
 
 # Clear and join data ----
 
@@ -42,6 +43,9 @@ d <- map_df(
 # Geographic variables come from the previous version of Gravity (legacy 
 # version) and from Geodist. In the next version of BACI the more recent Gravity
 # dataset will be used.
+
+# After removing influential rows twice, I get a result very similar to model II
+# in the article
 
 fit <- lm(
   log_cif_fob_unit_ratio_weighted ~ log_dist + log_dist_sq + contig +
@@ -113,22 +117,19 @@ outliers <- augment(fit) %>%
   filter(!(.std.resid < 2 & .cooksd < 4 / (n - p - 1) & .hat < 2*p / n)) %>% 
   nrow()
 
+rm(d)
+
 # Predict ----
 
 # The fobization is not applied if the predicted CIF rate is below 1, if 
 # applying it would increase the bilateral asymmetry, or if the importer does 
 # not report CIF.
 
-# After removing influential rows twice, I get a result very similar to model II
-# in the article
+# Here "not in kilograms" refers to the cases when not both parties report
+# weights in kilograms
 
-# y <- levels(fit$model$year)
-# 
-# d2 <- d %>% 
-#   filter(year %in% as.integer(y)) %>% 
-#   mutate(year = fct_drop(year))
-# 
-# d2 <- augment(fit, newdata = d2)
+# Kilowatt/hour units are labelled as "no fobization" and are not converted
+# nor corrected
 
 dexp <- data_partitioned() %>% 
   filter_flow_kg(1995, "export")
@@ -141,13 +142,37 @@ dexp <- dexp %>%
   join_flows_kg(dimp) %>% 
   fct_flag()
 
-dexp %>% select(flag_exp, flag_imp)
+rm(dimp)
 
-# mutate(
-#   reported_by = case_when(
-#     !is.na(trade_value_usd_imp) & !is.na(trade_value_usd_exp) ~ "both parties",
-#     !is.na(trade_value_usd_imp) & is.na(trade_value_usd_exp) ~ "importer only",
-#     is.na(trade_value_usd_imp) & is.na(trade_value_usd_exp) ~ "exporter only"
-#   ),
-#   reported_by = as.factor(reported_by)
-# )
+dexp <- dexp %>% 
+  impute_kg() %>% 
+  compute_ratios() %>% 
+  add_gravity_cols_left() %>% 
+  mutate(year = as_factor(year))
+
+# dexp %>% 
+#   filter(is.na(landlocked_partner)) %>% 
+#   select(partner_iso) %>% 
+#   distinct()
+
+dexp <- augment(fit, newdata = dexp) %>% 
+  fobization_val() %>% 
+  fobization_units_val() %>% 
+
+  mismatch_val() %>% 
+  select(reporter_iso, partner_iso, commodity_code, trade_value_usd_exp, 
+         trade_value_usd_imp, trade_value_usd_imp_fob, reported_by, fobization, 
+         difference_result) %>% 
+  
+  export_val() %>% 
+  select(reporter_iso, partner_iso, commodity_code, trade_value_usd_exp, 
+         reported_by, reported_value) %>% 
+  mutate_if(is.character, as_factor)
+
+# dexp %>% 
+#   group_by(reported_by) %>% 
+#   count()
+# 
+# dexp %>% 
+#   group_by(reported_value) %>% 
+#   count()

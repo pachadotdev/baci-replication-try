@@ -5,6 +5,10 @@ filter_flow <- function(d, y, f) {
       trade_flow == f,
       aggregate_level == 6
     ) %>% 
+    filter(
+      !reporter_iso %in% c("wld", "0-unspecified"),
+      !partner_iso %in% c("wld", "0-unspecified")
+    ) %>% 
     select(year, reporter_iso, partner_iso, commodity_code, trade_value_usd, qty_unit, qty) %>% 
     collect()
 }
@@ -16,12 +20,16 @@ filter_flow_kg <- function(d, y, f) {
       trade_flow == f,
       aggregate_level == 6
     ) %>% 
+    filter(
+      !reporter_iso %in% c("wld", "0-unspecified"),
+      !partner_iso %in% c("wld", "0-unspecified")
+    ) %>% 
     select(year, reporter_iso, partner_iso, commodity_code, trade_value_usd, qty_unit, qty, netweight_kg, flag) %>% 
     collect()
 }
 
 compute_ratios <- function(d) {
-  d <- d %>% 
+  d %>% 
     
     # value reported by the exporter / quantity reported by the exporter +
     # value reported by the importer/quantity reported by the importer)
@@ -65,11 +73,7 @@ compute_ratios <- function(d) {
       # log_cif_fob_unit_ratio_unweighted = log(cif_fob_unit_ratio_unweighted),
       # log_cif_fob_net_ratio_weighted = log(cif_fob_net_ratio_weighted),
       log_cif_fob_unit_ratio_weighted = log(cif_fob_unit_ratio_weighted)
-    ) %>% 
-    
-    select(year, reporter_iso, partner_iso, commodity_code,
-           starts_with("log_uv"), starts_with("cif_fob_"),
-           starts_with("log_cif_fob_"), reported_by)
+    )
 }
 
 data_partitioned <- function() {
@@ -91,9 +95,9 @@ join_flows <- function(dexp, dimp) {
       reported_by = case_when(
         !is.na(trade_value_usd_exp) & !is.na(trade_value_usd_imp) ~ "both parties",
         !is.na(trade_value_usd_exp) & is.na(trade_value_usd_imp) ~ "exporter only",
-        is.na(trade_value_usd_exp) & is.na(trade_value_usd_imp) ~ "importer only"
+        is.na(trade_value_usd_exp) & !is.na(trade_value_usd_imp) ~ "importer only"
       ),
-      reported_by = as.factor(reported_by)
+      reported_by = as_factor(reported_by)
     )
 }
 
@@ -179,19 +183,23 @@ conciliate_flows <- function(y) {
 
   dexp <- dexp %>% 
     compute_ratios() %>% 
-    mutate(year = as.factor(year))
+    select(year, reporter_iso, partner_iso, commodity_code,
+           starts_with("log_uv"), starts_with("cif_fob_"),
+           starts_with("log_cif_fob_"), reported_by) %>% 
+    mutate(year = as_factor(year))
   
   message(paste("Proportion of filtered rows / total rows", nrow(dexp) / n))
   
   return(dexp)
 }
 
-fix_iso_codes <- function(str) {
+fix_iso_codes <- function(val) {
   case_when(
-    str == "rom" ~ "rou", # Romania
-    str == "yug" ~ "scg", # Just for joins purposes, Yugoslavia splitted for the analyzed period
-    str == "tmp" ~ "tls", # use East Timor for joins
-    TRUE ~ str
+    val == "rom" ~ "rou", # Romania
+    val == "yug" ~ "scg", # Just for joins purposes, Yugoslavia splitted for the analyzed period
+    val == "tmp" ~ "tls", # use East Timor for joins
+    val == "zar" ~ "cod", # Congo (Democratic Republic of the)
+    TRUE ~ val
   )
 }
   
@@ -204,11 +212,11 @@ add_gravity_cols <- function(d) {
     inner_join(
       dist_cepii %>% 
         select(reporter_iso = iso_o, partner_iso = iso_d, dist, contig) %>% 
+        mutate_if(is.character, tolower) %>% 
         mutate(
           reporter_iso = fix_iso_codes(reporter_iso),
           partner_iso = fix_iso_codes(partner_iso)
         ) %>% 
-        mutate_if(is.character, tolower) %>% 
         mutate(
           log_dist = log(dist),
           log_dist_sq = (log(dist))^2
@@ -229,5 +237,42 @@ add_gravity_cols <- function(d) {
         mutate(partner_iso = fix_iso_codes(partner_iso)) %>% 
         distinct()
     ) %>% 
-    mutate_if(is.character, as.factor)
+    mutate_if(is.character, as_factor)
+}
+
+add_gravity_cols_left <- function(d) {
+  # Geographic variables come from the previous version of Gravity (legacy 
+  # version) and from Geodist. In the next version of BACI the more recent
+  # Gravity dataset will be used.
+  
+  d %>% 
+    left_join(
+      dist_cepii %>% 
+        select(reporter_iso = iso_o, partner_iso = iso_d, dist, contig) %>% 
+        mutate_if(is.character, tolower) %>% 
+        mutate(
+          reporter_iso = fix_iso_codes(reporter_iso),
+          partner_iso = fix_iso_codes(partner_iso)
+        ) %>% 
+        mutate(
+          log_dist = log(dist),
+          log_dist_sq = (log(dist))^2
+        ) %>% 
+        select(-dist)
+    ) %>% 
+    left_join(
+      geo_cepii %>% 
+        mutate_if(is.character, tolower) %>% 
+        select(reporter_iso = iso3, landlocked_reporter = landlocked) %>% 
+        mutate(reporter_iso = fix_iso_codes(reporter_iso)) %>% 
+        distinct()
+    ) %>% 
+    left_join(
+      geo_cepii %>% 
+        mutate_if(is.character, tolower) %>% 
+        select(partner_iso = iso3, landlocked_partner = landlocked) %>% 
+        mutate(partner_iso = fix_iso_codes(partner_iso)) %>% 
+        distinct()
+    ) %>% 
+    mutate_if(is.character, as_factor)
 }
