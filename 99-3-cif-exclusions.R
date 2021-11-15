@@ -74,14 +74,14 @@ for (y in Y) {
   }
 }
 
-final_table <- purrr::map_df(
+exclusions <- purrr::map_df(
   list.files("temp", full.names = T),
   function(x) {
     readr::read_csv(x)
   }
 )
 
-final_table <- final_table %>%
+exclusions <- exclusions %>%
   mutate(reporter = gsub("\\(.*", "", reporter)) %>%
   rename(
     uncomtrade_id = r,
@@ -89,7 +89,7 @@ final_table <- final_table %>%
   ) %>%
   select(year, reporter, everything())
 
-readr::write_csv(final_table, "trade_reporting_systems_per_country.csv")
+readr::write_csv(exclusions, "trade_reporting_systems_per_country.csv")
 
 # This is what BACI mentions, but there are more cases not reporting imports as CIF
 # not_cif <- c(
@@ -98,5 +98,16 @@ readr::write_csv(final_table, "trade_reporting_systems_per_country.csv")
 #   "zaf", "bwa", "lso", "nam", "swz"
 # )
 
-final_table %>%
-  filter(trade_flow == "Import", valuation != "CIF")
+load("~/UN ESCAP/comtrade-codes/01-2-tidy-country-data/country-codes.RData")
+
+exclusions <- exclusions %>%
+  filter(trade_flow == "Import", valuation != "CIF") %>%
+  left_join(country_codes %>%
+              select(reporter = country_name_english, iso3_digit_alpha),
+            by = "reporter")
+
+exclusions <- exclusions %>%
+  mutate(
+    iso3_digit_alpha = tolower(iso3_digit_alpha),
+    iso3_digit_alpha = fix_iso_codes(iso3_digit_alpha)
+  )
