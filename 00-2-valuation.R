@@ -180,4 +180,4 @@ valuation <- valuation %>%
 valuation <- valuation %>%
   arrange(year, reporter)
 
-readr::write_csv(valuation, "trade_valuation_system_per_country.csv")
+saveRDS(valuation, "trade_valuation_system_per_country.rds")

@@ -14,7 +14,7 @@
 # This is done by using helper functions
 
 raw_data <- "raw_dataset_1989_2004"
-prop_data <- "remaining_no_of_rows_after_filtering.csv"
+prop_data <- "remaining_no_of_rows_after_filtering.rds"
 
 if (!file.exists(raw_data)) {
   d <- map(
@@ -42,7 +42,7 @@ if (!file.exists(raw_data)) {
     group_by(year) %>%
     write_dataset(raw_data)
 
-  readr::write_csv(d2, prop_data)
+  saveRDS(d2, prop_data)
 } else {
   d <- arrow::open_dataset(raw_data, partitioning = "year") %>%
     collect() %>%
