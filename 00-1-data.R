@@ -49,8 +49,5 @@ if (!file.exists(raw_data)) {
     mutate(year = as.factor(gsub(".*=", "", year))) %>%
     select(year, everything())
 
-  # create RDS dataset for prof Reid
-  # saveRDS(d, "raw_dataset_1989_2004.rds", compress = "xz")
-
   d2 <- readr::read_csv(prop_data)
 }

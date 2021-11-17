@@ -14,8 +14,24 @@ filter_flow <- function(d, y, f) {
     collect()
 }
 
-compute_ratios <- function(d) {
-  d %>%
+compute_ratios <- function(dexp) {
+  dexp %>%
+
+    mutate(
+      trade_value_usd_reexp = ifelse(is.na(trade_value_usd_reexp), 0, trade_value_usd_reexp),
+      trade_value_usd_reimp = ifelse(is.na(trade_value_usd_reimp), 0, trade_value_usd_reimp),
+      qty_reexp = ifelse(is.na(qty_reexp), 0, qty_reexp),
+      qty_reimp = ifelse(is.na(qty_reimp), 0, qty_reimp),
+    ) %>%
+
+    rowwise() %>%
+    mutate(
+      trade_value_usd_netexp = max(trade_value_usd_exp - trade_value_usd_reexp, 0, na.rm = T),
+      trade_value_usd_netimp = max(trade_value_usd_imp - trade_value_usd_reimp, 0, na.rm = T),
+      qty_netexp = max(qty_exp - qty_reexp, 0, na.rm = T),
+      qty_netimp = max(qty_imp - qty_reimp, 0, na.rm = T)
+    ) %>%
+    ungroup() %>%
 
     # value reported by the exporter / quantity reported by the exporter +
     # value reported by the importer/quantity reported by the importer)
@@ -24,22 +40,34 @@ compute_ratios <- function(d) {
     # exporter) that reflects the CIF/FOB ratio ("CIF rate").
     mutate(
       unit_value_exp = (trade_value_usd_exp / qty_exp),
-      unit_value_imp = (trade_value_usd_imp / qty_imp)
+      unit_value_imp = (trade_value_usd_imp / qty_imp),
+
+      unit_value_netexp = (trade_value_usd_netexp / qty_netexp),
+      unit_value_netimp = (trade_value_usd_netimp / qty_netimp)
     ) %>%
 
     # Create UV explanatory variable
     # SEE PAGE 14 IN THE ARTICLE
     group_by(commodity_code) %>%
-    mutate(uv_exp = median(unit_value_exp, na.rm = T)) %>%
+    mutate(
+      uv_exp = median(unit_value_exp, na.rm = T),
+      uv_netexp = median(unit_value_netexp, na.rm = T)
+    ) %>%
     ungroup() %>%
 
     group_by(commodity_code) %>%
-    mutate(uv_imp = median(unit_value_imp, na.rm = T)) %>%
+    mutate(
+      uv_imp = median(unit_value_imp, na.rm = T),
+      uv_netimp = median(unit_value_netimp, na.rm = T)
+    ) %>%
     ungroup() %>%
 
     mutate(
       cif_fob_unit_ratio = unit_value_imp / unit_value_exp,
-      cif_fob_ratio = trade_value_usd_imp / trade_value_usd_exp
+      cif_fob_ratio = trade_value_usd_imp / trade_value_usd_exp,
+
+      cif_fob_unit_ratio_net = unit_value_netimp / unit_value_netexp,
+      cif_fob_ratio_net = trade_value_usd_netimp / trade_value_usd_netexp
     ) %>%
 
     # The unit or net CIF/FOB ratios can be weighted, or not, by the inverse of
@@ -48,7 +76,10 @@ compute_ratios <- function(d) {
     rowwise() %>%
     mutate(
       cif_fob_weights = 1 /
-        (max(qty_imp, qty_exp, na.rm = T) / min(qty_imp, qty_exp, na.rm = T))
+        (max(qty_imp, qty_exp, na.rm = T) / min(qty_imp, qty_exp, na.rm = T)),
+
+      cif_fob_weights_net = 1 /
+        (max(qty_netimp, qty_netexp, na.rm = T) / min(qty_netimp, qty_netexp, na.rm = T))
     ) %>%
     ungroup()
 }
@@ -71,18 +102,30 @@ data_partitioned <- function() {
     )
 }
 
-join_flows <- function(dexp, dimp) {
+join_flows <- function(dexp, dimp, dreexp, dreimp) {
   dexp %>%
     full_join(dimp, by = c("reporter_iso" = "partner_iso",
+                           "partner_iso" = "reporter_iso",
+                           "commodity_code")) %>%
+    left_join(dreexp, by = c("reporter_iso",
+                           "partner_iso",
+                           "commodity_code")) %>%
+    left_join(dreimp, by = c("reporter_iso" = "partner_iso",
                            "partner_iso" = "reporter_iso",
                            "commodity_code")) %>%
     rename(
       trade_value_usd_exp = trade_value_usd.x,
       trade_value_usd_imp = trade_value_usd.y,
+      trade_value_usd_reexp = trade_value_usd.x.x,
+      trade_value_usd_reimp = trade_value_usd.y.y,
       qty_unit_exp = qty_unit.x,
       qty_unit_imp = qty_unit.y,
+      qty_unit_reexp = qty_unit.x.x,
+      qty_unit_reimp = qty_unit.y.y,
       qty_exp = qty.x,
-      qty_imp = qty.y
+      qty_imp = qty.y,
+      qty_reexp = qty.x.x,
+      qty_reimp = qty.y.y
     ) %>%
     mutate(
       reported_by = case_when(
@@ -120,13 +163,20 @@ conciliate_flows <- function(y) {
     filter_flow(y = y, f = "import") %>%
     select(-year)
 
+  dreexp <- data_partitioned() %>%
+    filter_flow(y = y, f = "re-export") %>%
+    select(-year)
+
+  dreimp <- data_partitioned() %>%
+    filter_flow(y = y, f = "re-import") %>%
+    select(-year)
+
   # join mirrored flows ----
 
   # we do a full join, so all trade flows reported either by the importer or the
   # exporter are present in our intermediary datasets
-  dexp <- join_flows(dexp, dimp)
-
-  rm(dimp); gc()
+  dexp <- join_flows(dexp, dimp, dreexp, dreimp)
+  rm(dimp, dreexp, dreimp); gc()
 
   # work on obs. with kilograms ----
 
@@ -221,7 +271,8 @@ add_gravity_cols <- function(d) {
   d %>%
     inner_join(
       dist_cepii %>%
-        select(reporter_iso = iso_o, partner_iso = iso_d, dist, contig) %>%
+        select(reporter_iso = iso_o, partner_iso = iso_d, dist, contig,
+               colony, comlang_off) %>%
         mutate_if(is.character, tolower) %>%
         mutate(
           reporter_iso = fix_iso_codes(reporter_iso),
@@ -253,7 +304,8 @@ add_gravity_cols_left <- function(d) {
   d %>%
     left_join(
       dist_cepii %>%
-        select(reporter_iso = iso_o, partner_iso = iso_d, dist, contig) %>%
+        select(reporter_iso = iso_o, partner_iso = iso_d, dist, contig,
+               colony, comlang_off) %>%
         mutate_if(is.character, tolower) %>%
         mutate(
           reporter_iso = fix_iso_codes(reporter_iso),

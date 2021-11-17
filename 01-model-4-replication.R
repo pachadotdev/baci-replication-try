@@ -1,7 +1,7 @@
 source("99-1-pkgs.R")
 source("99-2-clean-funs.R")
 source("99-3-model-funs.R")
-source("00-data.R")
+source("00-1-data.R")
 
 # Model ----
 
@@ -83,11 +83,8 @@ fit <- lm(
 
 rm(dfit)
 
-n <- nrow(fit$model) # 8921447
-outliers <- number_outliers(fit) # 457939
-
-model4 <- list(fit = fit, outliers = outliers)
-rm(fit, n, p, outliers); gc()
+model4 <- list(fit = fit, outliers = number_outliers(fit))
+rm(fit); gc()
 
 try(dir.create("models"))
 

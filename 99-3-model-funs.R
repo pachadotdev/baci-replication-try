@@ -12,6 +12,9 @@ remove_outliers <- function(fit) {
 }
 
 number_outliers <- function(fit) {
+  n <- nrow(fit$model)
+  p <- length(fit$coefficients)
+
   augment(fit) %>%
     filter(!(.std.resid < 2 & .cooksd < 4 / (n - p - 1) & .hat < 2*p / n)) %>%
     nrow()

@@ -1,6 +1,13 @@
 library(arrow)
 library(dplyr)
+library(tidyr)
 library(purrr)
 library(cepiigeodist)
 library(broom)
 library(forcats)
+
+library(RSelenium)
+library(rvest)
+library(janitor)
+library(stringr)
+library(readr)
