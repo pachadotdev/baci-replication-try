@@ -17,6 +17,8 @@ raw_data <- "raw_dataset_1989_2004"
 prop_data <- "remaining_no_of_rows_after_filtering.rds"
 
 if (!file.exists(raw_data)) {
+  try(dir.create(raw_data))
+
   d <- map(
     # 1989,
     1989:2004,
@@ -49,5 +51,5 @@ if (!file.exists(raw_data)) {
     mutate(year = as.factor(gsub(".*=", "", year))) %>%
     select(year, everything())
 
-  d2 <- readr::read_csv(prop_data)
+  d2 <- readRDS(prop_data)
 }

@@ -1,14 +1,19 @@
 source("99-1-pkgs.R")
+source("99-2-clean-funs.R")
 source("99-3-model-funs.R")
 
-fout <- "raw_dataset_1989_2004.rds"
+extended_ds <- "extended_dataset_1989_2004.rds"
 
-if (!file.exists(fout)) {
-  source("99-2-clean-funs.R")
-  source("00-1-data.R")
+if (!file.exists(extended_ds)) {
+  d <- arrow::open_dataset("raw_dataset_1989_2004", partitioning = "year") %>%
+    collect() %>%
+    mutate(year = as.factor(gsub(".*=", "", year))) %>%
+    select(year, everything())
 
-  d_rtas <- readRDS("rtas/rtas_at_least_one_in_force_per_year.rds") %>%
-    filter(year %in% 1989:2004)
+  d <- d %>%
+    select(year, exporter_iso, importer_iso, cif_fob_unit_ratio, cif_fob_weights,
+           dist, uv_exp, contig, landlocked_reporter, landlocked_partner,
+           colony, comlang_off)
 
   d <- d %>%
     mutate(
@@ -16,6 +21,9 @@ if (!file.exists(fout)) {
       exporter_iso = as.character(exporter_iso),
       importer_iso = as.character(importer_iso)
     )
+
+  d_rtas <- readRDS("rtas/rtas_at_least_one_in_force_per_year.rds") %>%
+    filter(year %in% 1989:2004)
 
   dc <- d %>%
     select(exporter_iso, importer_iso) %>%
@@ -35,48 +43,56 @@ if (!file.exists(fout)) {
   d <- d %>%
     left_join(d_rtas)
 
+  # d %>%
+  #   select(year, exporter_iso, importer_iso, rta) %>%
+  #   filter(is.na(rta))
+
   d <- d %>%
-    # filter(is.na(rta))
     mutate(rta = ifelse(is.na(rta), 0, rta))
 
-  # create RDS dataset for prof Reid
-  saveRDS(d, "raw_dataset_1989_2004.rds")
+  # d %>%
+  #   select(year, exporter_iso, importer_iso, rta) %>%
+  #   filter(exporter_iso == "chl", importer_iso == "chn") %>%
+  #   distinct()
+
+  dval <- readRDS("trade_valuation_system_per_country.rds")
+
+  dval_exp <- dval %>%
+    filter(trade_flow == "Export", valuation == "FOB") %>%
+    select(year, exporter_iso = iso3_digit_alpha)
+
+  dval_imp <- dval %>%
+    filter(trade_flow == "Import", valuation == "CIF") %>%
+    select(year, importer_iso = iso3_digit_alpha)
+
+  rm(dval)
+
+  length(unique(dval_exp$exporter_iso))
+  length(unique(dval_imp$importer_iso))
+
+  # remove not FOB export / CIF imports
+  d <- d %>%
+    inner_join(dval_exp) %>%
+    inner_join(dval_imp)
+
+  rm(dval_exp, dval_imp)
+
+  d <- d %>%
+    mutate(
+      year = as.factor(year),
+
+      # exporter_iso = ifelse(exporter_iso == "can", "0-can", exporter_iso),
+      # importer_iso = ifelse(importer_iso == "can", "0-can", importer_iso),
+
+      exporter_iso = as.factor(exporter_iso),
+      importer_iso = as.factor(importer_iso)
+    )
+
+  rm(d_rtas); gc()
+  saveRDS(d, extended_ds, compress = "xz")
 } else {
-  d <- readRDS(fout)
+  d <- readRDS(extended_ds)
 }
-
-dval <- readr::read_csv("trade_valuation_system_per_country.csv")
-
-dval_exp <- dval %>%
-  filter(trade_flow == "Export", valuation == "FOB") %>%
-  select(year, exporter_iso = iso3_digit_alpha)
-
-dval_imp <- dval %>%
-  filter(trade_flow == "Import", valuation == "CIF") %>%
-  select(year, importer_iso = iso3_digit_alpha)
-
-rm(dval)
-
-length(unique(dval_exp$exporter_iso))
-length(unique(dval_imp$importer_iso))
-
-# remove not FOB export / CIF imports
-d <- d %>%
-  inner_join(dval_exp) %>%
-  inner_join(dval_imp)
-
-rm(dval_exp, dval_imp)
-
-d <- d %>%
-  mutate(
-    year = as.factor(year),
-
-    # exporter_iso = ifelse(exporter_iso == "can", "0-can", exporter_iso),
-    # importer_iso = ifelse(importer_iso == "can", "0-can", importer_iso),
-
-    exporter_iso = as.factor(exporter_iso),
-    importer_iso = as.factor(importer_iso)
-  )
 
 # create fixed effects
 # d <- d %>%
@@ -89,18 +105,13 @@ d <- d %>%
 # d <- d %>%
 #   mutate(pair_id = paste(exporter_iso, importer_iso, sep = "_"))
 
-d <- d %>%
-  select(year, exporter_iso, importer_iso, cif_fob_unit_ratio, cif_fob_weights,
-         dist, uv_exp, contig, landlocked_reporter, landlocked_partner)
-
 gc()
 
-fit <- glm(
-  cif_fob_unit_ratio ~ log(dist) + log(uv_exp) + contig +
-    landlocked_reporter + landlocked_partner + year,
+fit <- lm(
+  log(cif_fob_unit_ratio) ~ log(dist) + log(uv_exp) + contig +
+    landlocked_reporter + landlocked_partner + colony + comlang_off + rta + year,
   data = d,
-  weights = cif_fob_weights,
-  family = quasipoisson()
+  weights = cif_fob_weights
 )
 
 # summary(fit)
@@ -124,7 +135,7 @@ rm(d, fit); gc()
 
 fit <- glm(
   cif_fob_unit_ratio ~ log(dist) + log(uv_exp) + contig +
-    landlocked_reporter + landlocked_partner + year,
+    landlocked_reporter + landlocked_partner + colony + comlang_off + rta + year,
   data = dfit,
   weights = cif_fob_weights,
   family = quasipoisson()
@@ -138,7 +149,7 @@ gc()
 
 fit <- glm(
   cif_fob_unit_ratio ~ log(dist) + log(uv_exp) + contig +
-    landlocked_reporter + landlocked_partner + year,
+    landlocked_reporter + landlocked_partner + colony + comlang_off + rta + year,
   data = dfit,
   weights = cif_fob_weights,
   family = quasipoisson()
@@ -152,7 +163,7 @@ gc()
 
 fit <- glm(
   cif_fob_unit_ratio ~ log(dist) + log(uv_exp) + contig +
-    landlocked_reporter + landlocked_partner + year,
+    landlocked_reporter + landlocked_partner + colony + comlang_off + rta + year,
   data = dfit,
   weights = cif_fob_weights,
   family = quasipoisson()
@@ -161,13 +172,13 @@ fit <- glm(
 rm(dfit)
 gc()
 
-n <- nrow(fit$model) # 8728951
-outliers <- number_outliers(fit) # 784408
+n <- nrow(fit$model) # 8552796
+outliers <- number_outliers(fit) # 876039
 
 model <- list(fit = fit, outliers = outliers)
 rm(fit, n, outliers); gc()
 
 try(dir.create("models"))
 
-fout <- "models/proposed_model.rds"
+fout <- "models/proposed_model_2.rds"
 saveRDS(model, fout, compress = "xz")

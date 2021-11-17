@@ -5,4 +5,6 @@
 temp
 raw_dataset_1989_2004/
 raw_dataset_1989_2004.rds
+raw_dataset_1989_2004.csv
+extended_dataset_1989_2004.rds
 models/

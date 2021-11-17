@@ -308,20 +308,23 @@ d_rta <- crossing(
     treaties %>%
       bind_rows(withdrawals)
   ) %>%
-  fill(rta, .direction = "down")
+  arrange(year, country1, country2, base_treaty) %>%
+  group_by(country1, country2, base_treaty) %>%
+  fill(rta, .direction = "down") %>%
+  ungroup()
 
 d_rta <- d_rta %>%
-  arrange(year, country1, country2, base_treaty) %>%
-  drop_na() %>%
-  # filter(country1 == "bra", country2 == "ven") %>%
   group_by(country1, country2, base_treaty) %>%
+  # filter(country1 == "chl", country2 == "chn") %>%
   mutate(
-    rta = cumsum(rta),
-    rta = ifelse(rta > lag(rta), 1, 0),
-    rta = ifelse(is.na(rta), 1, rta)
-  ) %>%
-  group_by(year, country1, country2) %>%
-  summarise(rta = min(1, sum(rta)))
+    rta = ifelse(is.na(rta), 0, rta),
+    rta = ifelse(is.na(lag(rta)), rta, cumsum(rta)),
+    rta = case_when(
+      is.na(lag(rta)) ~ rta,
+      rta > lag(rta) & !is.na(lag(rta)) ~ 1,
+      rta <= lag(rta) & !is.na(lag(rta)) ~ 0
+    )
+  )
 
 d_rta <- d_rta %>% ungroup() %>% mutate_if(is.numeric, as.integer)
 
