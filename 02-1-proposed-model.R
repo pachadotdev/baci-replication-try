@@ -5,17 +5,17 @@ source("99-3-model-funs.R")
 extended_ds <- "extended_dataset_1989_2004.rds"
 
 if (!file.exists(extended_ds)) {
-  d <- arrow::open_dataset("raw_dataset_1989_2004", partitioning = "year") %>%
+  dfit <- arrow::open_dataset("raw_dataset_1989_2004", partitioning = "year") %>%
     collect() %>%
     mutate(year = as.factor(gsub(".*=", "", year))) %>%
     select(year, everything())
 
-  d <- d %>%
+  dfit <- dfit %>%
     select(year, exporter_iso, importer_iso, cif_fob_unit_ratio, cif_fob_weights,
            dist, uv_exp, contig, landlocked_reporter, landlocked_partner,
            colony, comlang_off)
 
-  d <- d %>%
+  dfit <- dfit %>%
     mutate(
       year = as.integer(as.character(year)),
       exporter_iso = as.character(exporter_iso),
@@ -25,7 +25,14 @@ if (!file.exists(extended_ds)) {
   d_rtas <- readRDS("rtas/rtas_at_least_one_in_force_per_year.rds") %>%
     filter(year %in% 1989:2004)
 
-  dc <- d %>%
+  d_rtas <- d_rtas %>%
+    group_by(year, country1, country2) %>%
+    summarise(rta = sum(rta)) %>%
+    rowwise() %>%
+    mutate(rta = min(1, rta)) %>%
+    ungroup()
+
+  dc <- dfit %>%
     select(exporter_iso, importer_iso) %>%
     rowwise() %>%
     mutate(
@@ -35,22 +42,18 @@ if (!file.exists(extended_ds)) {
     ungroup() %>%
     select(country1, country2)
 
-  d <- d %>%
+  dfit <- dfit %>%
     bind_cols(dc)
 
   rm(dc); gc()
 
-  d <- d %>%
+  dfit <- dfit %>%
     left_join(d_rtas)
 
-  # d %>%
-  #   select(year, exporter_iso, importer_iso, rta) %>%
-  #   filter(is.na(rta))
-
-  d <- d %>%
+  dfit <- dfit %>%
     mutate(rta = ifelse(is.na(rta), 0, rta))
 
-  # d %>%
+  # dfit %>%
   #   select(year, exporter_iso, importer_iso, rta) %>%
   #   filter(exporter_iso == "chl", importer_iso == "chn") %>%
   #   distinct()
@@ -71,13 +74,13 @@ if (!file.exists(extended_ds)) {
   length(unique(dval_imp$importer_iso))
 
   # remove not FOB export / CIF imports
-  d <- d %>%
+  dfit <- dfit %>%
     inner_join(dval_exp) %>%
     inner_join(dval_imp)
 
   rm(dval_exp, dval_imp)
 
-  d <- d %>%
+  dfit <- dfit %>%
     mutate(
       year = as.factor(year),
 
@@ -88,42 +91,55 @@ if (!file.exists(extended_ds)) {
       importer_iso = as.factor(importer_iso)
     )
 
+  dfit <- dfit %>%
+    mutate(
+      colony = as.integer(colony),
+      comlang_off = as.integer(comlang_off),
+      rta = as.integer(rta)
+    )
+
+  dfit <- dfit %>%
+    select(-c(country1, country2))
+
   rm(d_rtas); gc()
-  saveRDS(d, extended_ds, compress = "xz")
+  saveRDS(dfit, extended_ds, compress = "xz")
 } else {
-  d <- readRDS(extended_ds)
+  dfit <- readRDS(extended_ds)
 }
 
 # create fixed effects
-# d <- d %>%
+# dfit <- dfit %>%
 #   mutate(
 #     pi = as.factor(paste0(exporter_iso, year)),
 #     chi = as.factor(paste0(importer_iso, year))
 #   )
 
 # creater clustering variable
-# d <- d %>%
+# dfit <- dfit %>%
 #   mutate(pair_id = paste(exporter_iso, importer_iso, sep = "_"))
 
-gc()
+form <- cif_fob_unit_ratio ~ log(dist) + uv_exp +
+  landlocked_reporter + landlocked_partner +
+  contig + comlang_off + colony + rta + year
 
-fit <- lm(
-  log(cif_fob_unit_ratio) ~ log(dist) + log(uv_exp) + contig +
-    landlocked_reporter + landlocked_partner + colony + comlang_off + rta + year,
-  data = d,
-  weights = cif_fob_weights
-)
+fit <- function() {
+  glm(
+    form,
+    data = dfit,
+    weights = cif_fob_weights,
+    family = quasipoisson
+  )
+}
 
-# summary(fit)
-# saveRDS(fit, "models/proposed_model.rds")
+fit2 <- fit(); gc()
 
-gc()
+summary(fit2)
 
 n <- nrow(fit$model)
 p <- length(fit$coefficients)
-# rm(d)
+# rm(dfit)
 
-dfit <- d %>%
+dfit <- dfit %>%
   mutate(
     .cooksd = cooks.distance(fit),
     .std.resid = MASS::studres(fit),
@@ -131,46 +147,21 @@ dfit <- d %>%
   ) %>%
   filter(.std.resid < 2 & .cooksd < 4 / (n - p - 1) & .hat < 2 * p / n)
 
-rm(d, fit); gc()
+rm(dfit, fit); gc()
 
-fit <- glm(
-  cif_fob_unit_ratio ~ log(dist) + log(uv_exp) + contig +
-    landlocked_reporter + landlocked_partner + colony + comlang_off + rta + year,
-  data = dfit,
-  weights = cif_fob_weights,
-  family = quasipoisson()
-)
+fit2 <- fit(); gc()
 
-gc()
+dfit <- remove_outliers(fit2); gc()
 
-dfit <- remove_outliers(fit)
+fit2 <- fit(); gc()
 
-gc()
+dfit <- remove_outliers(fit2); gc()
 
-fit <- glm(
-  cif_fob_unit_ratio ~ log(dist) + log(uv_exp) + contig +
-    landlocked_reporter + landlocked_partner + colony + comlang_off + rta + year,
-  data = dfit,
-  weights = cif_fob_weights,
-  family = quasipoisson()
-)
+fit2 <- fit()
 
-gc()
+rm(dfit); gc()
 
-dfit <- remove_outliers(fit)
-
-gc()
-
-fit <- glm(
-  cif_fob_unit_ratio ~ log(dist) + log(uv_exp) + contig +
-    landlocked_reporter + landlocked_partner + colony + comlang_off + rta + year,
-  data = dfit,
-  weights = cif_fob_weights,
-  family = quasipoisson()
-)
-
-rm(dfit)
-gc()
+summary(fit2)
 
 n <- nrow(fit$model) # 8552796
 outliers <- number_outliers(fit) # 876039

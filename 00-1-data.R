@@ -19,7 +19,7 @@ prop_data <- "remaining_no_of_rows_after_filtering.rds"
 if (!file.exists(raw_data)) {
   try(dir.create(raw_data))
 
-  d <- map(
+  dfit <- map(
     # 1989,
     1989:2004,
     function(y) {
@@ -28,28 +28,28 @@ if (!file.exists(raw_data)) {
     }
   )
 
-  d2 <- map_df(
-    seq_along(d),
+  remaining_obs <- map_df(
+    seq_along(dfit),
     function(y) {
       tibble(
-        year = d[[y]][[1]],
-        prop_rows_after_filtering = d[[y]][[2]]
+        year = dfit[[y]][[1]],
+        prop_rows_after_filtering = dfit[[y]][[2]]
       )
     }
   )
 
-  d <- map_df(seq_along(d), function(y) d[[y]][[3]])
+  dfit <- map_df(seq_along(dfit), function(y) dfit[[y]][[3]])
 
-  d %>%
+  dfit %>%
     group_by(year) %>%
     write_dataset(raw_data)
 
-  saveRDS(d2, prop_data)
+  saveRDS(remaining_obs, prop_data)
 } else {
-  d <- arrow::open_dataset(raw_data, partitioning = "year") %>%
+  dfit <- arrow::open_dataset(raw_data, partitioning = "year") %>%
     collect() %>%
     mutate(year = as.factor(gsub(".*=", "", year))) %>%
     select(year, everything())
 
-  d2 <- readRDS(prop_data)
+  remaining_obs <- readRDS(prop_data)
 }
