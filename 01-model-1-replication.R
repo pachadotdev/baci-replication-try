@@ -58,7 +58,7 @@ if (!file.exists(fout)) {
 
   # 5) We reestimate the equation without these outliers. The results of the
   # regression without outliers are used to predict a FOB value for all CIF values
-  # reporter by importers.
+  # reported by importers.
 
   fit2 <- fit(); gc()
 
